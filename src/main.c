@@ -9,8 +9,8 @@
 
 #include "nob.h"
 
-#define SCREEN_WIDTH  800
-#define SCREEN_HEIGHT 600
+#define SCREEN_WIDTH  1280
+#define SCREEN_HEIGHT 720
 
 #define CELL_SIZE_PX 10
 
@@ -36,12 +36,12 @@ typedef enum {
 typedef enum {
     PT_EMPTY = 0,
     PT_SAND,
-    PT_STONE,
     PT_WATER,
+    PT_STONE,
     PT_COUNT
 } Particle_Type;
 
-static const char *PARTICLE_TYPE_NAMES[] = {"Empty", "Sand", "Stone", "Water", "Count"};
+static const char *PARTICLE_TYPE_NAMES[] = {"Empty", "Sand", "Water", "Stone", "Count"};
 
 typedef struct {
     Particle_Type type;
@@ -59,17 +59,17 @@ void particle_set(Particle *p, Particle_Type type)
     switch (type) {
         case PT_SAND: {
             p->props = PP_MOVE_DOWN | PP_MOVE_DOWN_SIDE;
-            p->color = ColorBrightness(GOLD,((RAND_FLOAT*2)-1)/4);
+            p->color = ColorBrightness(CLITERAL(Color){.r=235,.g=200,.b=175,.a=255},((RAND_FLOAT*2)-1)/4);
+            break;
+        }
+        case PT_WATER: {
+            p->props = PP_MOVE_DOWN | PP_MOVE_DOWN_SIDE | PP_MOVE_SIDE;
+            p->color = ColorBrightness(CLITERAL(Color){.r=175,.g=200,.b=235,.a=255},((RAND_FLOAT*2)-1)/4);
             break;
         }
         case PT_STONE: {
             p->props = PP_NONE;
             p->color = ColorBrightness(GRAY,((RAND_FLOAT*2)-1)/4);
-            break;
-        }
-        case PT_WATER: {
-            p->props = PP_MOVE_DOWN | PP_MOVE_DOWN_SIDE | PP_MOVE_SIDE;
-            p->color = ColorBrightness(BLUE,((RAND_FLOAT*2)-1)/4);
             break;
         }
         default: break;
@@ -297,16 +297,19 @@ bool world_move_side(World *world, size_t x, size_t y)
     p->color = material_get_color(mat);
 }*/
 
+#define FIXED_UPDATE
 int main()
 {
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Falling Sand");
 
     SetTargetFPS(0);
 
+#ifdef FIXED_UPDATE
     float accumulator = 0.0f;
     float current_time = GetTime();
     const float physics_fps = 62.0f;
     const float fixed_update_time = 1.0f / physics_fps;
+#endif // FIXED_UPDATE
 
     Vector2 mouse_pos;
     int hovered_grid_x = 0;
@@ -323,12 +326,16 @@ int main()
 
     while (!WindowShouldClose()) {
         mouse_pos = Vector2Scale(GetMousePosition(), (float)1/(float)world->scale);
+
+#ifdef FIXED_UPDATE
             float new_time = GetTime();
             float frame_time = new_time - current_time;
             current_time = new_time;
             accumulator += frame_time;
             while (accumulator >= fixed_update_time)
             {
+#endif // FIXED_UPDATE
+
                 //update particles
 
                 for (size_t y = world->height - 1; y > 0; --y) {
@@ -377,14 +384,15 @@ int main()
                     }
                 }
                 if (IsKeyDown(KEY_ONE)) selected = PT_SAND;
-                if (IsKeyDown(KEY_TWO)) selected = PT_STONE;
-                if (IsKeyDown(KEY_THREE)) selected = PT_WATER;
+                if (IsKeyDown(KEY_TWO)) selected = PT_WATER;
+                if (IsKeyDown(KEY_THREE)) selected = PT_STONE;
 
                 click_radius += GetMouseWheelMove() * scroll_speed;
 
-
+#ifdef FIXED_UPDATE
                 accumulator -= fixed_update_time;
             }
+#endif // FIXED_UPDATE
             BeginDrawing();
             ClearBackground(BLACK);
 
@@ -408,7 +416,11 @@ int main()
             WHITE
             );
             //board_draw(board);
+#ifdef FIXED_UPDATE
             DrawText(TextFormat("Physics FPS: %.f   FPS: %d", physics_fps, GetFPS()), 0, 0, 25, WHITE);
+#else // FIXED_UPDATE
+            DrawText(TextFormat("FPS: %d", GetFPS()), 0, 0, 25, WHITE);
+#endif // FIXED_UPDATE
             DrawText(TextFormat("Material: %s", PARTICLE_TYPE_NAMES[selected]), 0, 25, 25, WHITE);
             DrawText(TextFormat("x: %.f, y: %.f", mouse_pos.x, mouse_pos.y), 0, 50, 25, WHITE);
             DrawText(TextFormat("Updates: %d",updates), 0, 75, 25,WHITE);
