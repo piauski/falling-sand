@@ -1,0 +1,314 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <assert.h>
+#include <string.h>
+
+#include <raylib.h>
+#include <raymath.h>
+
+#define SCREEN_WIDTH  800
+#define SCREEN_HEIGHT 600
+
+#define CELL_SIZE_PX 10
+
+#define FPS 120
+#define INTERVAL 1
+
+#define CLICK_RADIUS 4
+
+#define GRID_WIDTH      (SCREEN_WIDTH/CELL_SIZE_PX)
+#define GRID_HEIGHT     (SCREEN_HEIGHT/CELL_SIZE_PX)
+#define GRID_INDEX(g, x, y) ((g)[GRID_WIDTH * x + y])
+
+#define RAND_FLOAT ((float)(rand()) / (float)(RAND_MAX))
+
+#define CLAMP(value, low, high) (((value) < (low)) ? (low) : (((value) > (high)) ? (high) : (value)))
+
+
+
+typedef enum {
+    Material_Id_Empty = 0,
+    Material_Id_Sand,
+    Material_Id_Stone,
+    Material_Id_Water,
+    Material_Id_Count,
+} Material_Id;
+
+const char *material_id_name(Material_Id mat)
+{
+    assert(Material_Id_Count == 4 && "ERROR: material_id_name switch case not exhaustive");
+    switch (mat) {
+        case Material_Id_Empty:
+        return "Empty";
+        case Material_Id_Sand:
+        return "Sand";
+        case Material_Id_Stone:
+        return "Stone";
+        case Material_Id_Water:
+        return "Water";
+        case Material_Id_Count:
+        return "NULL";
+    }
+    return "NULL";
+}
+
+Color material_get_color(Material_Id mat)
+{
+    assert(Material_Id_Count == 4 && "ERROR: material_id_name switch case not exhaustive");
+    switch (mat) {
+        case Material_Id_Empty:
+        return BLACK;
+        case Material_Id_Sand:
+        return ColorBrightness(GOLD,((RAND_FLOAT*2)-1)/4);
+        case Material_Id_Stone:
+        return ColorBrightness(GRAY,((RAND_FLOAT*2)-1)/4);
+        case Material_Id_Water:
+        return ColorBrightness(BLUE,((RAND_FLOAT*2)-1)/4);
+        case Material_Id_Count:
+        return BLACK;
+    }
+    return BLACK;
+}
+
+typedef struct {
+    uint32_t id;
+    float lifetime;
+    Vector2 velocity;
+    Color color;
+    bool has_been_updated;
+} Particle;
+
+Particle *board_get(Particle **board, size_t x, size_t y)
+{
+    return board[GRID_WIDTH * x + y];
+}
+
+bool board_set(Particle **board, size_t x, size_t y, Particle *particle)
+{
+    Particle *p = board_get(board,x,y);
+    board[GRID_WIDTH * x + y] = particle;
+    return p == NULL;
+}
+
+void particle_set(Particle **board, size_t x, size_t y, Material_Id mat)
+{
+    Particle *p = board_get(board,x,y);
+    p->id = mat;
+    p->color = material_get_color(mat);
+}
+
+Particle **board_new()
+{
+    Particle **board = malloc(sizeof(Particle) * GRID_WIDTH * GRID_HEIGHT);
+    assert(board && "ERROR: Could not allocate memory for Board");
+    memset(board, 0, sizeof(*board));
+
+    for (size_t y = 0; y < GRID_HEIGHT; ++y) {
+        for (size_t x = 0; x < GRID_WIDTH; ++x) {
+            Particle *particle = malloc(sizeof(Particle));
+            assert(particle && "ERROR: Could not allocate memory for Particle");
+            memset(particle, 0, sizeof(Particle));
+            board_set(board,x,y,particle);
+        }
+    }
+
+    return board;
+}
+
+bool board_free(Particle **board)
+{
+    for (size_t y = 0; y < GRID_HEIGHT; ++y) {
+        for (size_t x = 0; x < GRID_WIDTH; ++x) {
+            free(board[GRID_WIDTH * x + y]);
+        }
+    }
+    free(board);
+    return true;
+}
+
+void board_draw(Particle **board)
+{
+    for (size_t y = 0; y < GRID_HEIGHT; ++y) {
+        for (size_t x = 0; x < GRID_WIDTH; ++x) {
+            Rectangle cell = { x * CELL_SIZE_PX, y * CELL_SIZE_PX, CELL_SIZE_PX, CELL_SIZE_PX };
+            Particle *p = board_get(board, x, y);
+            switch(p->id) {
+                case Material_Id_Empty:
+                break;
+                default:
+                DrawRectangleRec(cell, p->color);
+            }
+
+            //DrawRectangleRec(cell, DARKPURPLE);
+            //DrawRectangleLinesEx(cell, 1, DARKGRAY);
+        }
+    }
+}
+
+void board_update_sand(Particle **board, size_t x, size_t y)
+{
+    Particle *sand = board_get(board, x, y);
+
+    int c_x = CLAMP(x, 0, GRID_WIDTH-1);
+    int c_x_l = CLAMP(x-1, 0, GRID_WIDTH-1);
+    int c_x_r = CLAMP(x+1, 0, GRID_WIDTH-1);
+    int c_y_d = CLAMP(y+1, 0, GRID_HEIGHT-1);
+
+    // if down empty:
+    if (board_get(board, x, c_y_d)->id == Material_Id_Empty) {
+        // move down
+        board_set(board, x, y, board_get(board, x, c_y_d));
+        board_set(board, x, c_y_d, sand);
+    }
+    // elif down and left empty:
+    else if (board_get(board, c_x_l, c_y_d)->id == Material_Id_Empty) {
+        // move down and left
+        board_set(board, x, y, board_get(board, c_x_l, c_y_d));
+        board_set(board, c_x_l, c_y_d, sand);
+    }
+    // elif down and right empty:
+    else if (board_get(board, c_x_r, c_y_d)->id == Material_Id_Empty) {
+        // move down and right
+        board_set(board, x, y, board_get(board, c_x_r, c_y_d));
+        board_set(board, c_x_r, c_y_d, sand);
+    }
+    // else:
+    // stay
+}
+
+
+// void board_update_sand(Particle **board, size_t x, size_t y)
+// {
+//     Particle *p = board_get(board, x, y);
+
+//     if (y == GRID_HEIGHT - 1) return;
+//     Particle *query_d  = board_get(board, x, y + 1);
+//     Particle *query_dl = x > 0 ? board_get(board, x - 1, y + 1) : NULL;
+//     Particle *query_dr = x < GRID_WIDTH-1 ? board_get(board, x + 1, y + 1) : NULL;
+
+//     if (query_d->id == Material_Id_Empty) {
+//         board_set(board, x, y + 1, p);
+//         board_set(board, x, y, query_d);
+//         return;
+//     } else if (query_dl && query_dl->id == Material_Id_Empty) {
+//         board_set(board, x - 1, y + 1, p);
+//         board_set(board, x, y, query_dl);
+//     } else if (query_dr && query_dr->id == Material_Id_Empty) {
+//         board_set(board, x + 1, y + 1, p);
+//         board_set(board, x, y, query_dr);
+//     }
+//     return;
+// }
+
+void board_update_water(Particle **board, size_t x, size_t y)
+{
+    Particle *p = board_get(board, x, y);
+
+    if (y == GRID_HEIGHT - 1) return;
+    Particle *query_d  = board_get(board, x, y + 1);
+    Particle *query_dl = x > 0 ? board_get(board, x - 1, y + 1) : NULL;
+    Particle *query_dr = x < GRID_WIDTH-1 ? board_get(board, x + 1, y + 1) : NULL;
+    Particle *query_l = x > 0 ? board_get(board, x - 1, y) : NULL;
+    Particle *query_r = x < GRID_WIDTH-1 ? board_get(board, x + 1, y) : NULL;
+
+
+
+    if (query_d->id == Material_Id_Empty) {
+        board_set(board, x, y + 1, p);
+        board_set(board, x, y, query_d);
+    } else if (query_dl && query_dl->id == Material_Id_Empty) {
+        board_set(board, x - 1, y + 1, p);
+        board_set(board, x, y, query_dl);
+    } else if (query_dr && query_dr->id == Material_Id_Empty) {
+        board_set(board, x + 1, y + 1, p);
+        board_set(board, x, y, query_dr);
+    } else if (query_l && query_l->id == Material_Id_Empty) {
+        board_set(board, x - 1, y, p);
+        board_set(board, x, y, query_l);
+    } else if (query_r && query_r->id == Material_Id_Empty) {
+        board_set(board, x + 1, y, p);
+        board_set(board, x, y, query_r);
+    }
+
+
+
+    return;
+}
+
+int main()
+{
+    InitWindow(800, 600, "Falling Sand");
+    SetTargetFPS(FPS);
+
+    Vector2 mouse_pos;
+    int hovered_grid_x = 0;
+    int hovered_grid_y = 0;
+    int interval = 0;
+
+    size_t selected = Material_Id_Sand;
+
+    Particle **board = board_new();
+
+    while (!WindowShouldClose()) {
+        mouse_pos = GetMousePosition();
+        hovered_grid_x = (int)mouse_pos.x/CELL_SIZE_PX;
+        hovered_grid_y = (int)mouse_pos.y/CELL_SIZE_PX;
+
+        interval++;
+        if (interval >= INTERVAL) {
+            interval = 0;
+            for (size_t y = GRID_HEIGHT - 1; y > 0; --y) {
+                for (size_t x = 0; x < GRID_WIDTH; ++x) {
+                    Particle* p = board_get(board, x, y);
+                    assert(Material_Id_Count == 4 && "ERROR: Material update switch case not exhaustive");
+                    switch(p->id) {
+                        case Material_Id_Empty:
+                        break;
+                        case Material_Id_Sand:
+                        board_update_sand(board, x, y);
+                        case Material_Id_Stone:
+                        break;
+                        case Material_Id_Water:
+                        board_update_water(board, x, y);
+                        case Material_Id_Count:
+                        break;
+                    }
+                }
+            }
+        }
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            for (int i = -CLICK_RADIUS; i < CLICK_RADIUS; ++i) {
+                for (int j = -CLICK_RADIUS; j < CLICK_RADIUS; ++j) {
+                    Vector2 offset = { .x = i, .y = j };
+                    Vector2 hovered = { .x = hovered_grid_x, .y = hovered_grid_y };
+                    if (Vector2DistanceSqr(hovered, Vector2Add(hovered, offset)) <= CLICK_RADIUS*CLICK_RADIUS &&
+                        (float)rand()/RAND_MAX < 0.1f &&
+                        (hovered_grid_x + i > 0 && hovered_grid_x + i < GRID_WIDTH) &&
+                        (hovered_grid_y + j > 0 && hovered_grid_y + j < GRID_HEIGHT))
+                    {
+                        particle_set(board, hovered_grid_x + i, hovered_grid_y + j, selected);
+                    }
+                }
+            }
+        }
+        if (IsKeyPressed(KEY_ONE)) selected = Material_Id_Sand;
+        if (IsKeyPressed(KEY_TWO)) selected = Material_Id_Stone;
+        if (IsKeyPressed(KEY_THREE)) selected = Material_Id_Water;
+
+        BeginDrawing();
+        ClearBackground(BLACK);
+
+
+        board_draw(board);
+        DrawText(TextFormat("x: %d, y: %d", hovered_grid_x, hovered_grid_y), 0, 0, 25, WHITE);
+        DrawText(TextFormat("Material: %s",material_id_name(selected)), 0, 25, 25, WHITE);
+        DrawCircleV(mouse_pos, 10, GRAY);
+        EndDrawing();
+    }
+
+    CloseWindow();
+    board_free(board);
+
+    return 0;
+}
