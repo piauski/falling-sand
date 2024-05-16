@@ -17,8 +17,6 @@
 #define FPS 120
 #define INTERVAL 1
 
-#define CLICK_RADIUS 10
-
 #define GRID_WIDTH      (SCREEN_WIDTH/CELL_SIZE_PX)
 #define GRID_HEIGHT     (SCREEN_HEIGHT/CELL_SIZE_PX)
 #define GRID_INDEX(g, x, y) ((g)[GRID_WIDTH * x + y])
@@ -43,6 +41,8 @@ typedef enum {
     PT_COUNT
 } Particle_Type;
 
+static const char *PARTICLE_TYPE_NAMES[] = {"Empty", "Sand", "Stone", "Water", "Count"};
+
 typedef struct {
     Particle_Type type;
     Particle_Properties props;
@@ -52,8 +52,9 @@ typedef struct {
 
 void particle_set(Particle *p, Particle_Type type)
 {
-    p->props = PP_NONE;
     p->type = type;
+    p->props = PP_NONE;
+    p->color = BLANK;
 
     switch (type) {
         case PT_SAND: {
@@ -64,6 +65,7 @@ void particle_set(Particle *p, Particle_Type type)
         case PT_STONE: {
             p->props = PP_NONE;
             p->color = ColorBrightness(GRAY,((RAND_FLOAT*2)-1)/4);
+            break;
         }
         case PT_WATER: {
             p->props = PP_MOVE_DOWN | PP_MOVE_DOWN_SIDE | PP_MOVE_SIDE;
@@ -73,6 +75,15 @@ void particle_set(Particle *p, Particle_Type type)
         default: break;
     }
 }
+
+int particle_chance(Particle_Type type) {
+    switch(type) {
+        case PT_SAND:
+        case PT_WATER: return 10;
+        default: return 1;
+    }
+}
+
 
 typedef struct Vector2i {
     int x;
@@ -92,6 +103,7 @@ typedef struct {
     Particle **particles;
     Particle_Updates particle_updates;
 
+    Color *image_data;
     Image image;
     Texture2D texture;
 } World;
@@ -115,14 +127,19 @@ World *world_new(size_t width, size_t height, double scale)
             Particle *particle = malloc(sizeof(Particle));
             assert(particle && "Could not allocate Particle");
             memset(particle, 0, sizeof(Particle));
-            particle->color = RED;
+            particle->color = BLANK;
             particles[x + y * width] = particle;
         }
     }
 
     world->particles = particles;
 
-    world->image = GenImageColor(world->width, world->height, RED);
+    world->image_data = malloc(sizeof(Color) * world->width * world->height);
+    for (size_t i = 0; i < world->width * world->height; ++i) {
+        world->image_data[i] = world->particles[i]->color;
+    }
+
+    world->image = GenImageColor(world->width, world->height, BLANK);
     world->texture = LoadTextureFromImage(world->image);
 
     return world;
@@ -135,27 +152,18 @@ void world_free(World *world)
             free(world->particles[world->width * x + y]);
         }
     }
+    free(world->image_data);
     UnloadImage(world->image);
     UnloadTexture(world->texture);
     nob_da_free(world->particle_updates);
     free(world);
 }
 
-Color *world_gen_image_data(World *world)
-{
-    Color *colors = malloc(sizeof(Color) * world->width * world->height);
-    for (size_t i = 0; i < world->width * world->height; ++i) {
-        colors[i] = world->particles[i]->color;
-    }
-    return colors;
-}
-
-Color *world_update_image_data(World *world, Color *colors)
+Color *world_update_image_data(World *world)
 {
     for (size_t i = 0; i < world->width * world->height; ++i) {
-        colors[i] = world->particles[i]->color;
+        world->image_data[i] = world->particles[i]->color;
     }
-    return colors;
 }
 
 size_t world_get_index(World *world, size_t x, size_t y) {
@@ -291,13 +299,14 @@ bool world_move_side(World *world, size_t x, size_t y)
 
 int main()
 {
-    InitWindow(800, 600, "Falling Sand");
+    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Falling Sand");
 
     SetTargetFPS(0);
 
     float accumulator = 0.0f;
     float current_time = GetTime();
-    const float fixed_update_time = 1.0f / 62.0f;
+    const float physics_fps = 62.0f;
+    const float fixed_update_time = 1.0f / physics_fps;
 
     Vector2 mouse_pos;
     int hovered_grid_x = 0;
@@ -305,48 +314,15 @@ int main()
     int interval = 0;
 
     size_t selected = PT_SAND;
+    float click_radius = 10;
+    float scroll_speed = 10;
 
-    World *world = world_new(SCREEN_WIDTH, SCREEN_HEIGHT, 4);
+    int updates;
 
-    // for (size_t y = 100; y < 120; ++y) {
-    //     for (size_t x = 50; x < world->width - 50; ++x) {
-    //         Particle *p = world_get_at(world, x, y);
-    //         p->type = PT_SAND;
-    //         p->props = PP_MOVE_DOWN & PP_MOVE_DOWN_SIDE;
-    //         p->color = particle_get_color(PT_SAND);
-    //     }
-    // }
-
-
-    Color *world_image_data = world_gen_image_data(world);
+    World *world = world_new(SCREEN_WIDTH, SCREEN_HEIGHT, 2);
 
     while (!WindowShouldClose()) {
         mouse_pos = Vector2Scale(GetMousePosition(), (float)1/(float)world->scale);
-        //hovered_grid_x = (int)mouse_pos.x/CELL_SIZE_PX;
-        //hovered_grid_y = (int)mouse_pos.y/CELL_SIZE_PX;
-
-        //interval++;
-        //if (interval >= INTERVAL) {
-            //    interval = 0;
-            /*for (size_t y = GRID_HEIGHT - 1; y > 0; --y) {
-                for (size_t x = 0; x < GRID_WIDTH; ++x) {
-                    Particle* p = board_get(board, x, y);
-                    assert(Material_Id_Count == 4 && "ERROR: Material update switch case not exhaustive");
-                    switch(p->id) {
-                        case Material_Id_Empty:
-                        break;
-                        case Material_Id_Sand:
-                        board_update_sand(board, x, y);
-                        case Material_Id_Stone:
-                        break;
-                        case Material_Id_Water:
-                        board_update_water(board, x, y);
-                        case Material_Id_Count:
-                        break;
-                    }
-                }
-            }*/
-            //}
             float new_time = GetTime();
             float frame_time = new_time - current_time;
             current_time = new_time;
@@ -365,43 +341,55 @@ int main()
 
                     }
                 }
-                // TODO: use the Fisher-Yates shuffle algorithm to randomly
-                // shuffle the array then loop over it. i += 2 to skip over
-                // each pair, then iterate over them and commit the changes
-                // as such. Allocate a new array twice the size as particles
-                // then free in world_update_particles.
+                updates = world->particle_updates.count;
                 world_update_particles(world);
 
                 //input
                 if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
-                    for (int i = -CLICK_RADIUS; i < CLICK_RADIUS; ++i) {
-                        for (int j = -CLICK_RADIUS; j < CLICK_RADIUS; ++j) {
+                    for (int i = -click_radius; i < click_radius; ++i) {
+                        for (int j = -click_radius; j < click_radius; ++j) {
                             Vector2 offset = { .x = i, .y = j };
                             Vector2 hovered = { .x = mouse_pos.x, .y = mouse_pos.y };
                             size_t new_x = (size_t)mouse_pos.x + i;
                             size_t new_y = (size_t)mouse_pos.y + j;
-                            if (Vector2DistanceSqr(hovered, Vector2Add(hovered, offset)) <= CLICK_RADIUS*CLICK_RADIUS &&
-                            GetRandomValue(1,10) == 1 &&
-                            world_is_empty(world, new_x, new_y))
-                            {
+                            if (
+                                Vector2DistanceSqr(hovered, Vector2Add(hovered, offset)) <= click_radius * click_radius &&
+                                GetRandomValue(1, particle_chance(selected)) == 1 &&
+                                world_is_empty(world, new_x, new_y)
+                            ) {
                                 particle_set(world_get_at(world, new_x, new_y), selected);
-                                //world_set_particle(world, hovered_grid_x + i, hovered_grid_y + j, selected);
                             }
                         }
                     }
+                } else if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
+                    for (int i = -click_radius; i < click_radius; ++i) {
+                        for (int j = -click_radius; j < click_radius; ++j) {
+                            Vector2 offset = { .x = i, .y = j };
+                            Vector2 hovered = { .x = mouse_pos.x, .y = mouse_pos.y };
+                            size_t new_x = (size_t)mouse_pos.x + i;
+                            size_t new_y = (size_t)mouse_pos.y + j;
+                            if (Vector2DistanceSqr(hovered, Vector2Add(hovered, offset)) <= click_radius*click_radius &&
 
+                            world_in_bounds(world, new_x, new_y)) {
+                                particle_set(world_get_at(world, new_x, new_y), PT_EMPTY);
+                            }
+                        }
+                    }
                 }
                 if (IsKeyDown(KEY_ONE)) selected = PT_SAND;
                 if (IsKeyDown(KEY_TWO)) selected = PT_STONE;
                 if (IsKeyDown(KEY_THREE)) selected = PT_WATER;
+
+                click_radius += GetMouseWheelMove() * scroll_speed;
+
+
                 accumulator -= fixed_update_time;
             }
             BeginDrawing();
-            //ClearBackground(RED);
+            ClearBackground(BLACK);
 
-            world_image_data = world_update_image_data(world, world_image_data);
-
-            UpdateTexture(world->texture, world_image_data);
+            world_update_image_data(world);
+            UpdateTexture(world->texture, world->image_data);
 
 
 
@@ -420,15 +408,19 @@ int main()
             WHITE
             );
             //board_draw(board);
-            DrawText(TextFormat("x: %.f, y: %.f", mouse_pos.x, mouse_pos.y), 0, 0, 25, WHITE);
-            DrawText(TextFormat("Material: %d",selected), 0, 25, 25, WHITE);
-            const char* fps_text = TextFormat("FPS: %d",GetFPS());
-            DrawText(fps_text, SCREEN_WIDTH-MeasureText(fps_text,25),0,25,WHITE);
-            //DrawCircleV(mouse_pos, 10, GRAY);
+            DrawText(TextFormat("Physics FPS: %.f   FPS: %d", physics_fps, GetFPS()), 0, 0, 25, WHITE);
+            DrawText(TextFormat("Material: %s", PARTICLE_TYPE_NAMES[selected]), 0, 25, 25, WHITE);
+            DrawText(TextFormat("x: %.f, y: %.f", mouse_pos.x, mouse_pos.y), 0, 50, 25, WHITE);
+            DrawText(TextFormat("Updates: %d",updates), 0, 75, 25,WHITE);
+            DrawCircle(
+                mouse_pos.x * world->scale,
+                mouse_pos.y * world->scale,
+                click_radius * world->scale,
+                (Color){ .r = 255, .g = 255, .b = 255, .a = 50 }
+            );
             EndDrawing();
         }
 
-        free(world_image_data);
         world_free(world);
 
         CloseWindow();
