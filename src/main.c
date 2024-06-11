@@ -9,9 +9,12 @@
 
 #include "nob.h"
 
+#define ARENA_IMPLEMENTATION
+#include "arena.h"
+
 #define SCREEN_WIDTH  1280
 #define SCREEN_HEIGHT 720
-#define SCREEN_SCALE  1
+#define SCREEN_SCALE  2
 
 #define CELL_SIZE_PX 10
 
@@ -298,21 +301,24 @@ bool world_move_down(World *world, size_t x, size_t y)
 {
     Particle p = world_get_at(world, x, y);
     if (p.free_falling) {
-        float g_accel = 0.1;
+        float g_accel = 1;
         p.velocity.y += g_accel;
-        //p.velocity = Vector2Add(g_accel, p.velocity);
+        p.color = RED;
+    } else {
+        p.velocity.y = 0;
     }
-    if (!world_in_bounds(world, x, y + 1)) return false;
-    Particle p_down = world_get_at(world, x, y + 1);
+    world_set_particle(world,x,y,p);
+    if (!world_in_bounds(world, x, y + 1 + p.velocity.y)) return false;
+    Particle p_down = world_get_at(world, x, y + 1 + p.velocity.y);
 
     if (p_down.type == PT_EMPTY)
     {
-        world_move_particle(world, x, y, x, y + 1);
+        world_move_particle(world, x, y, x, y + 1 + p.velocity.y);
         return true;
     } else if (p.props & PP_SOLID && p_down.props & PP_LIQUID)
     {
-        world_move_particle(world, x, y, x, y + 1);
-        world_move_particle(world, x, y + 1, x, y);
+        world_move_particle(world, x, y, x, y + 1 + p.velocity.y);
+        world_move_particle(world, x, y + 1 + p.velocity.y, x, y);
         return true;
     }
     return false;
@@ -397,6 +403,7 @@ int main(void)
     int updates;
 
     World *world = world_new(SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_SCALE);
+    // TODO: Use arenas
 
     while (!WindowShouldClose()) {
         mouse_pos = Vector2Scale(GetMousePosition(), (float)1/(float)world->scale);
@@ -416,14 +423,18 @@ int main(void)
                 for (size_t x = 0; x < world->width; ++x) {
                     Particle p = world_get_at(world, x, y);
                     if (p.props != PP_NONE) {
-                        if (p.props & PP_MOVE_DOWN || p.props & PP_MOVE_DOWN_SIDE)
-                        p.free_falling = true;
-                        if ((p.props & PP_MOVE_DOWN) && world_move_down(world, x, y)) {}
+                        if (p.props & PP_MOVE_DOWN || p.props & PP_MOVE_DOWN_SIDE) {
+                            p.free_falling = true;
+                        }
+                        if ((p.props & PP_MOVE_DOWN) && world_move_down(world, x, y)) {
+                            p.free_falling = true;
+                        }
                         else if ((p.props & PP_MOVE_DOWN_SIDE) && world_move_down_side(world, x, y)) {
                             p.velocity = (Vector2){ .x = p.velocity.x, .y = 0 };
                         }
                         else if ((p.props & PP_MOVE_SIDE) && world_move_side(world, x, y)) {}
                     }
+                    world_set_particle(world, x, y, p);
                 }
             }
             updates = world->particle_updates.count;
